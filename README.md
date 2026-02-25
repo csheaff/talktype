@@ -5,7 +5,7 @@ it again to transcribe and type the text wherever your cursor is. No GUI, no
 app to keep running — just a keyboard shortcut.
 
 - **Pluggable backends** — swap transcription models without changing anything else
-- **Works everywhere** — GNOME, Sway, Hyprland, i3, X11
+- **Works everywhere** — GNOME, Sway, Hyprland, i3, X11 (or atleast, it's supposed to)
 - **~160 lines of bash** — easy to read, easy to hack on
 
 Ships with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) by
