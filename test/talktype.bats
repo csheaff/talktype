@@ -20,10 +20,12 @@ setup() {
 }
 
 teardown() {
-    # Kill any leftover recording processes
-    if [ -f "$TALKTYPE_DIR/rec.pid" ]; then
-        kill "$(cat "$TALKTYPE_DIR/rec.pid")" 2>/dev/null || true
-    fi
+    # Kill any leftover processes
+    for pidfile in rec.pid trans.pid; do
+        if [ -f "$TALKTYPE_DIR/$pidfile" ]; then
+            kill "$(cat "$TALKTYPE_DIR/$pidfile")" 2>/dev/null || true
+        fi
+    done
     rm -rf "$TALKTYPE_DIR"
 }
 
@@ -32,6 +34,8 @@ start_fake_recording() {
     sleep 300 &
     echo $! > "$TALKTYPE_DIR/rec.pid"
     echo "audio data" > "$TALKTYPE_DIR/rec.wav"
+    # Write a timestamp 10 seconds in the past (well above cancel threshold)
+    echo $(( $(date +%s%N) - 10000000000 )) > "$TALKTYPE_DIR/rec.start"
 }
 
 # ── Recording lifecycle ──
@@ -122,8 +126,8 @@ start_fake_recording() {
 
     run "$TALKTYPE"
 
-    # Script should fail (set -e catches the non-zero exit)
-    [ "$status" -ne 0 ]
+    # Script exits cleanly — failure is caught by the wait pattern
+    [ "$status" -eq 0 ]
 
     # No typing tool should have been called
     [ ! -f "$TALKTYPE_DIR/ydotool.log" ]
@@ -234,6 +238,50 @@ start_fake_recording() {
     [ -f "$TALKTYPE_DIR/.ydotool-warned" ]
     # Warning should be in output
     [[ "$output" == *"ydotool without ydotoold"* ]]
+}
+
+# ── Dependency checking ──
+
+# ── Cancel mechanisms ──
+
+@test "double-press cancels recording without transcribing" {
+    start_fake_recording
+    # Overwrite with a fresh timestamp (just now — under 1 second)
+    date +%s%N > "$TALKTYPE_DIR/rec.start"
+
+    run "$TALKTYPE"
+    [ "$status" -eq 0 ]
+
+    # Should not have transcribed or typed
+    [ ! -f "$TALKTYPE_DIR/wtype.log" ]
+    [ ! -f "$TALKTYPE_DIR/ydotool.log" ]
+    # Audio file should be cleaned up
+    [ ! -f "$TALKTYPE_DIR/rec.wav" ]
+}
+
+@test "hotkey during transcription cancels it" {
+    # Create a fake transcription process
+    sleep 300 &
+    local trans_pid=$!
+    echo "$trans_pid" > "$TALKTYPE_DIR/trans.pid"
+
+    run "$TALKTYPE"
+    [ "$status" -eq 0 ]
+
+    # Transcription process should be killed
+    ! kill -0 "$trans_pid" 2>/dev/null
+    [ ! -f "$TALKTYPE_DIR/trans.pid" ]
+}
+
+@test "stale trans.pid falls through to start recording" {
+    echo "99999" > "$TALKTYPE_DIR/trans.pid"
+
+    run "$TALKTYPE"
+    [ "$status" -eq 0 ]
+
+    # Should have started recording
+    [ -f "$TALKTYPE_DIR/rec.pid" ]
+    [ ! -f "$TALKTYPE_DIR/trans.pid" ]
 }
 
 # ── Dependency checking ──

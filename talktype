@@ -22,6 +22,8 @@ TALKTYPE_DIR="${TALKTYPE_DIR:-${XDG_RUNTIME_DIR:-/tmp}/talktype}"
 PIDFILE="$TALKTYPE_DIR/rec.pid"
 AUDIOFILE="$TALKTYPE_DIR/rec.wav"
 NOTIFYFILE="$TALKTYPE_DIR/notify.id"
+TRANSFILE="$TALKTYPE_DIR/trans.pid"
+STARTFILE="$TALKTYPE_DIR/rec.start"
 
 mkdir -p "$TALKTYPE_DIR"
 
@@ -53,7 +55,11 @@ notify() {
 
 notify_close() {
     if [ -f "$NOTIFYFILE" ]; then
-        notify-send -a TalkType -r "$(cat "$NOTIFYFILE")" -e "TalkType" "" 2>/dev/null || true
+        gdbus call --session \
+            --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.CloseNotification \
+            "$(cat "$NOTIFYFILE")" &>/dev/null || true
         rm -f "$NOTIFYFILE"
     fi
 }
@@ -125,6 +131,17 @@ check_deps() {
 
 check_deps
 
+# ── If transcription in progress → cancel it ──
+if [ -f "$TRANSFILE" ]; then
+    PID=$(cat "$TRANSFILE")
+    rm -f "$TRANSFILE"
+    if kill -0 "$PID" 2>/dev/null; then
+        kill "$PID" 2>/dev/null || true
+        notify_close
+        exit 0
+    fi
+fi
+
 # ── If currently recording → stop, transcribe, type ──
 if [ -f "$PIDFILE" ]; then
     PID=$(cat "$PIDFILE")
@@ -133,19 +150,41 @@ if [ -f "$PIDFILE" ]; then
     while kill -0 "$PID" 2>/dev/null; do sleep 0.05; done
     rm -f "$PIDFILE"
 
-    notify process-working "Transcribing..."
-
-    # Run the transcription command with the audio file as last arg
-    TEXT=$($TALKTYPE_CMD "$AUDIOFILE")
-
-    rm -f "$AUDIOFILE"
-
-    if [ -z "$TEXT" ]; then
-        notify dialog-warning "No speech detected"
-        exit 0
+    # Double-press cancel: if recording was under 1.5 seconds, discard
+    if [ -f "$STARTFILE" ]; then
+        START=$(cat "$STARTFILE")
+        rm -f "$STARTFILE"
+        if NOW=$(date +%s%N 2>/dev/null) && [ $(( (NOW - START) / 1000000 )) -lt 1500 ]; then
+            rm -f "$AUDIOFILE"
+            notify_close
+            exit 0
+        fi
     fi
 
     notify_close
+
+    # Run transcription in background so it can be cancelled
+    TRANSOUT="$TALKTYPE_DIR/trans.out"
+    $TALKTYPE_CMD "$AUDIOFILE" > "$TRANSOUT" &
+    TRANS_PID=$!
+    echo "$TRANS_PID" > "$TRANSFILE"
+
+    WAIT_STATUS=0
+    wait "$TRANS_PID" || WAIT_STATUS=$?
+
+    rm -f "$TRANSFILE" "$AUDIOFILE"
+
+    if [ "$WAIT_STATUS" -ne 0 ]; then
+        rm -f "$TRANSOUT"
+        exit 0
+    fi
+
+    TEXT=$(cat "$TRANSOUT")
+    rm -f "$TRANSOUT"
+
+    if [ -z "$TEXT" ]; then
+        exit 0
+    fi
 
     # Type text at cursor
     type_text "$TEXT"
@@ -163,5 +202,6 @@ else
     PID=$!
     disown "$PID"
     echo "$PID" > "$PIDFILE"
+    date +%s%N > "$STARTFILE" 2>/dev/null || true
     notify audio-input-microphone "Listening..."
 fi
