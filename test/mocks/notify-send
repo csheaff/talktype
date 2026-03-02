@@ -1,3 +1,8 @@
 #!/usr/bin/env bash
-# Mock notify-send: no-op
+# Mock notify-send
+
+# Support -p: output a fake notification ID
+for arg in "$@"; do
+    [[ "$arg" == "-p" ]] && echo "42"
+done
 exit 0

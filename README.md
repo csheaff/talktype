@@ -102,6 +102,9 @@ bindsym $mod+d exec talktype
 2. Speak
 3. Press the shortcut again → transcribes and types the text at your cursor
 
+**Cancel:** Double-press the shortcut (press twice within ~1.5 seconds) to cancel
+without transcribing. You can also press the shortcut during transcription to cancel.
+
 ## Backends
 
 Server backends auto-start on first use — the model loads once and stays in
